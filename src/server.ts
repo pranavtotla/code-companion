@@ -125,17 +125,9 @@ function defaultSpawnPty(
     write: (data) => {
       proc.stdin?.write(data);
     },
-    resize: (cols, rows) => {
-      // Update env and signal the Python helper to resize the PTY
-      if (proc.pid) {
-        process.env.COLUMNS = String(cols);
-        process.env.LINES = String(rows);
-        try {
-          process.kill(proc.pid, "SIGUSR1");
-        } catch {
-          // Process may have already exited
-        }
-      }
+    resize: (_cols, _rows) => {
+      // Resize is not supported with the Python PTY helper.
+      // Initial size is set via COLUMNS/LINES env vars at spawn time.
     },
     kill: (signal) => {
       proc.kill(signal as NodeJS.Signals | undefined);
