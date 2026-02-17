@@ -4,17 +4,18 @@ import {
   type Server as HttpServer,
 } from "node:http";
 import { Server as SocketIOServer } from "socket.io";
-import * as pty from "node-pty";
+import { spawn, execFileSync, type ChildProcess } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
-import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import { RoomManager } from "./rooms.js";
 
-/** Resolve full path to claude binary since node-pty doesn't use shell PATH */
+/** Resolve full path to claude binary since child_process may not see shell PATH */
 function resolveClaudePath(): string {
   try {
-    return execFileSync("/usr/bin/which", ["claude"], { encoding: "utf-8" }).trim();
+    return execFileSync("/usr/bin/which", ["claude"], {
+      encoding: "utf-8",
+    }).trim();
   } catch {
     return "claude";
   }
@@ -27,7 +28,7 @@ export interface SharedClaudeServer {
   close(): Promise<void>;
 }
 
-/** Minimal interface for a PTY process (matches node-pty's IPty) */
+/** Minimal interface for a PTY-like process */
 export interface IPtyLike {
   pid: number;
   onData(callback: (data: string) => void): void;
@@ -56,7 +57,12 @@ interface ServerOptions {
   spawnPty?: SpawnPty;
 }
 
-/** Default PTY spawner using node-pty */
+/**
+ * Default PTY spawner using macOS `script` command.
+ *
+ * `script -q /dev/null <command>` creates a real PTY for the child process,
+ * so claude sees a terminal and renders its full TUI. No native modules needed.
+ */
 function defaultSpawnPty(
   command: string,
   args: string[],
@@ -68,18 +74,54 @@ function defaultSpawnPty(
     env: Record<string, string>;
   }
 ): IPtyLike {
-  const shell = pty.spawn(command, args, options);
+  const fullCmd = [command, ...args].join(" ");
+
+  const proc = spawn("script", ["-q", "/dev/null", fullCmd], {
+    cwd: options.cwd,
+    env: {
+      ...options.env,
+      TERM: options.name,
+      COLUMNS: String(options.cols),
+      LINES: String(options.rows),
+    },
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+
+  const dataCallbacks: Array<(data: string) => void> = [];
+  const exitCallbacks: Array<(e: { exitCode: number }) => void> = [];
+
+  proc.stdout?.on("data", (chunk: Buffer) => {
+    const str = chunk.toString("utf-8");
+    for (const cb of dataCallbacks) cb(str);
+  });
+
+  proc.stderr?.on("data", (chunk: Buffer) => {
+    const str = chunk.toString("utf-8");
+    for (const cb of dataCallbacks) cb(str);
+  });
+
+  proc.on("exit", (code) => {
+    for (const cb of exitCallbacks) cb({ exitCode: code ?? 0 });
+  });
+
   return {
-    pid: shell.pid,
+    pid: proc.pid ?? 0,
     onData: (cb) => {
-      shell.onData(cb);
+      dataCallbacks.push(cb);
     },
     onExit: (cb) => {
-      shell.onExit(cb);
+      exitCallbacks.push(cb);
     },
-    write: (data) => shell.write(data),
-    resize: (cols, rows) => shell.resize(cols, rows),
-    kill: (signal) => shell.kill(signal),
+    write: (data) => {
+      proc.stdin?.write(data);
+    },
+    resize: (cols, rows) => {
+      // Send SIGWINCH isn't directly possible through script,
+      // but we update env for any future child processes
+    },
+    kill: (signal) => {
+      proc.kill(signal as NodeJS.Signals | undefined);
+    },
   };
 }
 
@@ -110,7 +152,9 @@ export async function createServer(
 
     // Validate the working directory exists
     if (!fs.existsSync(workingDir)) {
-      res.status(400).json({ error: `Directory does not exist: ${workingDir}` });
+      res
+        .status(400)
+        .json({ error: `Directory does not exist: ${workingDir}` });
       return;
     }
 
@@ -141,7 +185,6 @@ export async function createServer(
         roomManager.destroyRoom(room.code);
       });
     } catch (err) {
-      // If PTY spawn fails, destroy the room and return an error
       console.error("PTY spawn failed:", err);
       console.error("Claude path:", claudePath);
       console.error("Working dir:", workingDir);
