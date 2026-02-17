@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Shared Claude Code</title>
+  <link rel="stylesheet" href="/style.css" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css" />
+</head>
+<body>
+  <!-- Landing Page -->
+  <div id="landing" class="page">
+    <h1>Shared Claude Code</h1>
+    <p class="subtitle">Collaborate in a shared Claude Code terminal session</p>
+
+    <div class="card-container">
+      <div class="card">
+        <h2>Create Session</h2>
+        <label>
+          Your Name
+          <input type="text" id="create-name" placeholder="Alice" maxlength="20" />
+        </label>
+        <label>
+          Working Directory
+          <input type="text" id="create-cwd" placeholder="/path/to/project" />
+        </label>
+        <button id="btn-create">Create Room</button>
+      </div>
+
+      <div class="card">
+        <h2>Join Session</h2>
+        <label>
+          Your Name
+          <input type="text" id="join-name" placeholder="Bob" maxlength="20" />
+        </label>
+        <label>
+          Room Code
+          <input type="text" id="join-code" placeholder="abc123" maxlength="6" />
+        </label>
+        <button id="btn-join">Join Room</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Session Page -->
+  <div id="session" class="page hidden">
+    <div id="status-bar">
+      <span id="room-code-display"></span>
+      <span id="users-display"></span>
+      <span id="typing-display"></span>
+    </div>
+    <div id="terminal-container"></div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="/client.js"></script>
+</body>
+</html>
