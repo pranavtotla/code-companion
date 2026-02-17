@@ -84,6 +84,7 @@ function defaultSpawnPty(
       TERM: options.name,
       COLUMNS: String(options.cols),
       LINES: String(options.rows),
+      PYTHONDONTWRITEBYTECODE: "1",
     },
     stdio: ["pipe", "pipe", "pipe"],
   });
