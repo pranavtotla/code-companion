@@ -67,10 +67,13 @@
     term.open($("#terminal-container"));
     fitAddon.fit();
 
-    // Connect socket.io
+    // Connect socket.io with reconnection
     socket = io({
       query: { roomCode, displayName },
       transports: ["websocket"],
+      reconnection: true,
+      reconnectionAttempts: 5,
+      reconnectionDelay: 1000,
     });
 
     // Terminal output from server
@@ -137,6 +140,14 @@
 
     socket.on("disconnect", () => {
       term.write("\r\n\x1b[31m[Disconnected from server]\x1b[0m\r\n");
+    });
+
+    socket.on("reconnect_failed", () => {
+      term.write("\r\n\x1b[31m[Failed to reconnect. Refresh to try again.]\x1b[0m\r\n");
+    });
+
+    socket.on("reconnect", () => {
+      term.write("\r\n\x1b[32m[Reconnected]\x1b[0m\r\n");
     });
   }
 })();
