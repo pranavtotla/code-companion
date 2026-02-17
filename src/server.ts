@@ -57,11 +57,14 @@ interface ServerOptions {
   spawnPty?: SpawnPty;
 }
 
+const PTY_HELPER = path.join(__dirname, "pty-helper.py");
+
 /**
- * Default PTY spawner using macOS `script` command.
+ * Default PTY spawner using a Python helper script.
  *
- * `script -q /dev/null <command>` creates a real PTY for the child process,
- * so claude sees a terminal and renders its full TUI. No native modules needed.
+ * The helper uses Python's pty.openpty() to create a real pseudo-terminal,
+ * then relays between piped stdin/stdout and the PTY master fd.
+ * Works with piped stdio from Node — no native modules needed.
  */
 function defaultSpawnPty(
   command: string,
@@ -74,9 +77,7 @@ function defaultSpawnPty(
     env: Record<string, string>;
   }
 ): IPtyLike {
-  const fullCmd = [command, ...args].join(" ");
-
-  const proc = spawn("script", ["-q", "/dev/null", fullCmd], {
+  const proc = spawn("python3", [PTY_HELPER, command, ...args], {
     cwd: options.cwd,
     env: {
       ...options.env,
@@ -92,17 +93,26 @@ function defaultSpawnPty(
 
   proc.stdout?.on("data", (chunk: Buffer) => {
     const str = chunk.toString("utf-8");
+    console.log("[PTY stdout]", JSON.stringify(str).slice(0, 200));
     for (const cb of dataCallbacks) cb(str);
   });
 
   proc.stderr?.on("data", (chunk: Buffer) => {
     const str = chunk.toString("utf-8");
+    console.error("[PTY stderr]", JSON.stringify(str).slice(0, 200));
     for (const cb of dataCallbacks) cb(str);
   });
 
-  proc.on("exit", (code) => {
+  proc.on("exit", (code, signal) => {
+    console.log("[PTY exit] code:", code, "signal:", signal);
     for (const cb of exitCallbacks) cb({ exitCode: code ?? 0 });
   });
+
+  proc.on("error", (err) => {
+    console.error("[PTY error]", err);
+  });
+
+  console.log("[PTY spawned] pid:", proc.pid, "cmd:", fullCmd);
 
   return {
     pid: proc.pid ?? 0,
@@ -116,8 +126,16 @@ function defaultSpawnPty(
       proc.stdin?.write(data);
     },
     resize: (cols, rows) => {
-      // Send SIGWINCH isn't directly possible through script,
-      // but we update env for any future child processes
+      // Update env and signal the Python helper to resize the PTY
+      if (proc.pid) {
+        process.env.COLUMNS = String(cols);
+        process.env.LINES = String(rows);
+        try {
+          process.kill(proc.pid, "SIGUSR1");
+        } catch {
+          // Process may have already exited
+        }
+      }
     },
     kill: (signal) => {
       proc.kill(signal as NodeJS.Signals | undefined);
