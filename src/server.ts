@@ -112,7 +112,7 @@ function defaultSpawnPty(
     console.error("[PTY error]", err);
   });
 
-  console.log("[PTY spawned] pid:", proc.pid, "cmd:", fullCmd);
+  console.log("[PTY spawned] pid:", proc.pid, "cmd:", command);
 
   return {
     pid: proc.pid ?? 0,
