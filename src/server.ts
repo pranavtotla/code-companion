@@ -8,6 +8,7 @@ import * as pty from "node-pty";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
+import fs from "node:fs";
 import { RoomManager } from "./rooms.js";
 
 /** Resolve full path to claude binary since node-pty doesn't use shell PATH */
@@ -93,6 +94,7 @@ export async function createServer(
   const roomManager = new RoomManager();
   const spawnPty = options.spawnPty ?? defaultSpawnPty;
   const claudePath = resolveClaudePath();
+  console.log("Resolved claude path:", claudePath);
 
   // Track PTY processes by room code for cleanup
   const ptyProcesses = new Map<string, IPtyLike>();
@@ -105,6 +107,13 @@ export async function createServer(
   app.post("/api/rooms", (req, res) => {
     const { cwd, hostName } = req.body ?? {};
     const workingDir = cwd || process.cwd();
+
+    // Validate the working directory exists
+    if (!fs.existsSync(workingDir)) {
+      res.status(400).json({ error: `Directory does not exist: ${workingDir}` });
+      return;
+    }
+
     const room = roomManager.createRoom({ cwd: workingDir, hostName });
 
     try {
@@ -133,6 +142,9 @@ export async function createServer(
       });
     } catch (err) {
       // If PTY spawn fails, destroy the room and return an error
+      console.error("PTY spawn failed:", err);
+      console.error("Claude path:", claudePath);
+      console.error("Working dir:", workingDir);
       roomManager.destroyRoom(room.code);
       const message = err instanceof Error ? err.message : "Unknown error";
       res.status(500).json({ error: `Failed to spawn claude: ${message}` });

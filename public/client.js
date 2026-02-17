@@ -24,7 +24,8 @@
     });
 
     if (!res.ok) {
-      alert("Failed to create room");
+      const data = await res.json().catch(() => ({}));
+      alert(data.error || "Failed to create room");
       return;
     }
 
