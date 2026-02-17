@@ -1,4 +1,6 @@
-import { nanoid } from "nanoid";
+import { customAlphabet } from "nanoid";
+
+const generateCode = customAlphabet("abcdefghijklmnopqrstuvwxyz0123456789", 6);
 
 interface UserInfo {
   socketId: string;
@@ -58,7 +60,7 @@ export class RoomManager {
   private rooms: Map<string, Room> = new Map();
 
   createRoom(options: CreateRoomOptions): Room {
-    const code = nanoid(6).toLowerCase();
+    const code = generateCode();
     const room = new Room(code, options);
     this.rooms.set(code, room);
     return room;
