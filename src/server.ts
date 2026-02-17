@@ -7,7 +7,17 @@ import { Server as SocketIOServer } from "socket.io";
 import * as pty from "node-pty";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
+import { execFileSync } from "node:child_process";
 import { RoomManager } from "./rooms.js";
+
+/** Resolve full path to claude binary since node-pty doesn't use shell PATH */
+function resolveClaudePath(): string {
+  try {
+    return execFileSync("/usr/bin/which", ["claude"], { encoding: "utf-8" }).trim();
+  } catch {
+    return "claude";
+  }
+}
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -82,6 +92,7 @@ export async function createServer(
   });
   const roomManager = new RoomManager();
   const spawnPty = options.spawnPty ?? defaultSpawnPty;
+  const claudePath = resolveClaudePath();
 
   // Track PTY processes by room code for cleanup
   const ptyProcesses = new Map<string, IPtyLike>();
@@ -98,7 +109,7 @@ export async function createServer(
 
     try {
       // Spawn claude in a PTY
-      const shell = spawnPty("claude", [], {
+      const shell = spawnPty(claudePath, [], {
         name: "xterm-256color",
         cols: 120,
         rows: 40,
