@@ -210,6 +210,7 @@ export async function createServer(
 
   // --- WebSocket ---
   io.on("connection", (socket) => {
+    console.log("[WS] new connection:", socket.id);
     const { roomCode, displayName } = socket.handshake.query as Record<
       string,
       string
@@ -272,7 +273,8 @@ export async function createServer(
     });
 
     // Disconnect
-    socket.on("disconnect", () => {
+    socket.on("disconnect", (reason) => {
+      console.log("[WS] disconnected:", socket.id, "reason:", reason);
       room.removeUser(socket.id);
       io.to(roomCode).emit("user:left", {
         name: displayName,

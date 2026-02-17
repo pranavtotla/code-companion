@@ -11,6 +11,15 @@
   let fitAddon = null;
   let typingTimeout = null;
 
+  // Clean up any previous socket before creating a new one
+  function cleanupSocket() {
+    if (socket) {
+      socket.removeAllListeners();
+      socket.disconnect();
+      socket = null;
+    }
+  }
+
   // --- Landing Page Handlers ---
 
   $("#btn-create").addEventListener("click", async () => {
@@ -48,8 +57,6 @@
   // --- Session Logic ---
 
   function joinRoom(roomCode, displayName) {
-    landingPage.classList.add("hidden");
-    sessionPage.classList.remove("hidden");
     roomCodeDisplay.textContent = "Room: " + roomCode;
 
     const copyBtn = document.querySelector("#btn-copy-code");
@@ -76,10 +83,14 @@
     term.open($("#terminal-container"));
     fitAddon.fit();
 
-    // Connect socket.io with reconnection
+    // Clean up any previous connection
+    cleanupSocket();
+
+    // Connect socket.io
     socket = io({
       query: { roomCode, displayName },
       transports: ["websocket"],
+      forceNew: true,
       reconnection: true,
       reconnectionAttempts: 5,
       reconnectionDelay: 1000,
@@ -115,6 +126,10 @@
     });
 
     socket.on("connect", () => {
+      // Only show session page once socket is actually connected
+      landingPage.classList.add("hidden");
+      sessionPage.classList.remove("hidden");
+      fitAddon.fit();
       socket.emit("terminal:resize", { cols: term.cols, rows: term.rows });
     });
 
@@ -147,8 +162,9 @@
       landingPage.classList.remove("hidden");
     });
 
-    socket.on("disconnect", () => {
-      term.write("\r\n\x1b[31m[Disconnected from server]\x1b[0m\r\n");
+    socket.on("disconnect", (reason) => {
+      console.log("Socket disconnected. Reason:", reason);
+      term.write("\r\n\x1b[31m[Disconnected from server: " + reason + "]\x1b[0m\r\n");
     });
 
     socket.on("reconnect_failed", () => {
