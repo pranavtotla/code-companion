@@ -51,6 +51,14 @@
     sessionPage.classList.remove("hidden");
     roomCodeDisplay.textContent = "Room: " + roomCode;
 
+    const copyBtn = document.querySelector("#btn-copy-code");
+    copyBtn.addEventListener("click", () => {
+      navigator.clipboard.writeText(roomCode).then(() => {
+        copyBtn.textContent = "Copied!";
+        setTimeout(() => { copyBtn.textContent = "Copy"; }, 1500);
+      });
+    });
+
     // Set up xterm.js
     term = new Terminal({
       cursorBlink: true,
