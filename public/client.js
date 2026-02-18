@@ -10,6 +10,7 @@
   let term = null;
   let fitAddon = null;
   let typingTimeout = null;
+  let isCreator = false;
 
   // Clean up any previous socket before creating a new one
   function cleanupSocket() {
@@ -24,12 +25,11 @@
 
   $("#btn-create").addEventListener("click", async () => {
     const name = $("#create-name").value.trim() || "Host";
-    const cwd = $("#create-cwd").value.trim() || undefined;
 
     const res = await fetch("/api/rooms", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ cwd, hostName: name }),
+      body: JSON.stringify({ hostName: name }),
     });
 
     if (!res.ok) {
@@ -39,6 +39,7 @@
     }
 
     const { code } = await res.json();
+    isCreator = true;
     joinRoom(code, name);
   });
 
@@ -103,7 +104,7 @@
 
     // Terminal exited
     socket.on("terminal:exit", ({ exitCode }) => {
-      term.write("\r\n\x1b[33m[Claude exited with code " + exitCode + "]\x1b[0m\r\n");
+      term.write("\r\n\x1b[33m[Shell exited with code " + exitCode + "]\x1b[0m\r\n");
     });
 
     // User input to server
@@ -118,7 +119,7 @@
 
     // Resize
     term.onResize(({ cols, rows }) => {
-      socket.emit("terminal:resize", { cols, rows });
+      if (isCreator) socket.emit("terminal:resize", { cols, rows });
     });
 
     window.addEventListener("resize", () => {
@@ -130,7 +131,7 @@
       landingPage.classList.add("hidden");
       sessionPage.classList.remove("hidden");
       fitAddon.fit();
-      socket.emit("terminal:resize", { cols: term.cols, rows: term.rows });
+      if (isCreator) socket.emit("terminal:resize", { cols: term.cols, rows: term.rows });
     });
 
     // Presence
