@@ -65,6 +65,10 @@ export class RoomManager {
     }
   }
 
+  getAllRooms(): Room[] {
+    return Array.from(this.rooms.values());
+  }
+
   destroyAll(): void {
     for (const room of this.rooms.values()) {
       room.destroy();
