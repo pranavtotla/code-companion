@@ -32,7 +32,7 @@ Share the ngrok URL — others open it, enter the room code, and they're in.
 
 - **Server:** Node.js, Express, socket.io, Python PTY helper
 - **Client:** xterm.js, socket.io-client
-- **Tests:** vitest (28 tests)
+- **Tests:** vitest (26 tests)
 
 ## Running tests
 
