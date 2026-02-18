@@ -1,0 +1,6 @@
+{
+  "name": "code-companion",
+  "version": "0.1.0",
+  "description": "Share terminal sessions with anyone via browser. Create collaborative sessions, share room codes, and let others join from any browser.",
+  "keywords": ["terminal", "sharing", "collaboration", "pair-programming"]
+}

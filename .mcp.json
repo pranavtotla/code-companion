@@ -1,0 +1,6 @@
+{
+  "code-companion": {
+    "command": "tsx",
+    "args": ["${CLAUDE_PLUGIN_ROOT}/src/mcp-server.ts"]
+  }
+}
