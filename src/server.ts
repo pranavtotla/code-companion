@@ -4,26 +4,15 @@ import {
   type Server as HttpServer,
 } from "node:http";
 import { Server as SocketIOServer } from "socket.io";
-import { spawn, execFileSync, type ChildProcess } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import fs from "node:fs";
 import { RoomManager } from "./rooms.js";
 
-/** Resolve full path to claude binary since child_process may not see shell PATH */
-function resolveClaudePath(): string {
-  try {
-    return execFileSync("/usr/bin/which", ["claude"], {
-      encoding: "utf-8",
-    }).trim();
-  } catch {
-    return "claude";
-  }
-}
-
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-export interface SharedClaudeServer {
+export interface CodeCompanionServer {
   port: number;
   close(): Promise<void>;
 }
@@ -138,7 +127,7 @@ function defaultSpawnPty(
 
 export async function createServer(
   options: ServerOptions = {}
-): Promise<SharedClaudeServer> {
+): Promise<CodeCompanionServer> {
   const app = express();
   const httpServer = createHttpServer(app);
   const io = new SocketIOServer(httpServer, {
@@ -146,8 +135,6 @@ export async function createServer(
   });
   const roomManager = new RoomManager();
   const spawnPty = options.spawnPty ?? defaultSpawnPty;
-  const claudePath = resolveClaudePath();
-  console.log("Resolved claude path:", claudePath);
 
   // Track PTY processes by room code for cleanup
   const ptyProcesses = new Map<string, IPtyLike>();
@@ -172,8 +159,8 @@ export async function createServer(
     const room = roomManager.createRoom({ cwd: workingDir, hostName });
 
     try {
-      // Spawn claude in a PTY
-      const shell = spawnPty(claudePath, [], {
+      // Spawn bash in a PTY
+      const shell = spawnPty("bash", [], {
         name: "xterm-256color",
         cols: 120,
         rows: 40,
@@ -189,7 +176,7 @@ export async function createServer(
         io.to(room.code).emit("terminal:output", data);
       });
 
-      // When claude exits, notify room and clean up
+      // When shell exits, notify room and clean up
       shell.onExit(({ exitCode }) => {
         io.to(room.code).emit("terminal:exit", { exitCode });
         ptyProcesses.delete(room.code);
@@ -197,11 +184,10 @@ export async function createServer(
       });
     } catch (err) {
       console.error("PTY spawn failed:", err);
-      console.error("Claude path:", claudePath);
       console.error("Working dir:", workingDir);
       roomManager.destroyRoom(room.code);
       const message = err instanceof Error ? err.message : "Unknown error";
-      res.status(500).json({ error: `Failed to spawn claude: ${message}` });
+      res.status(500).json({ error: `Failed to spawn shell: ${message}` });
       return;
     }
 
@@ -233,11 +219,7 @@ export async function createServer(
       return;
     }
 
-    if (!room.addUser(socket.id, displayName)) {
-      socket.emit("error:room", { message: "Room is full (max 2 users)" });
-      socket.disconnect();
-      return;
-    }
+    room.addUser(socket.id, displayName);
 
     socket.join(roomCode);
 
@@ -264,8 +246,9 @@ export async function createServer(
       socket.to(roomCode).emit("user:stop-typing", { name: displayName });
     });
 
-    // Terminal resize
+    // Terminal resize (creator only)
     socket.on("terminal:resize", (size: { cols: number; rows: number }) => {
+      if (socket.id !== room.creatorSocketId) return;
       const ptyProcess = ptyProcesses.get(roomCode);
       if (ptyProcess) {
         ptyProcess.resize(size.cols, size.rows);
@@ -325,6 +308,6 @@ const isMain =
 if (isMain) {
   const port = parseInt(process.env.PORT ?? "3000", 10);
   createServer({ port }).then((s) => {
-    console.log(`Shared Claude Code running on http://localhost:${s.port}`);
+    console.log(`Code Companion running on http://localhost:${s.port}`);
   });
 }

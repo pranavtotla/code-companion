@@ -16,6 +16,7 @@ export class Room {
   readonly code: string;
   readonly cwd: string;
   readonly hostName: string;
+  creatorSocketId: string | null = null;
   private users: Map<string, string> = new Map(); // socketId -> displayName
 
   constructor(code: string, options: CreateRoomOptions) {
@@ -29,6 +30,9 @@ export class Room {
   }
 
   addUser(socketId: string, name: string): boolean {
+    if (this.creatorSocketId === null) {
+      this.creatorSocketId = socketId;
+    }
     this.users.set(socketId, name);
     return true;
   }

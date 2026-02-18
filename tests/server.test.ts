@@ -1,7 +1,7 @@
 import { describe, it, expect, afterAll, afterEach } from "vitest";
 import {
   createServer,
-  type SharedClaudeServer,
+  type CodeCompanionServer,
   type SpawnPty,
   type IPtyLike,
 } from "../src/server.js";
@@ -105,7 +105,7 @@ function waitForEventWithTimeout(
 }
 
 describe("Server", () => {
-  let server: SharedClaudeServer;
+  let server: CodeCompanionServer;
   const clients: ClientSocket[] = [];
   let mockPtyFactory: ReturnType<typeof createMockPty>;
 
@@ -232,29 +232,38 @@ describe("Server", () => {
     expect(mockPty.written).toContain("ls -la\n");
   });
 
-  it("handles terminal resize events", async () => {
+  it("only allows room creator to resize the terminal", async () => {
     const res = await fetch(`http://localhost:${server.port}/api/rooms`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ cwd: "/tmp", hostName: "Host" }),
+      body: JSON.stringify({ hostName: "Host" }),
     });
     const { code } = await res.json();
 
-    const client = connectClient(server.port, {
+    const creator = connectClient(server.port, {
       roomCode: code,
-      displayName: "Resizer",
+      displayName: "Creator",
     });
-    clients.push(client);
+    clients.push(creator);
+    await waitForEventWithTimeout(creator, "user:joined");
 
-    await waitForEventWithTimeout(client, "user:joined");
+    const guest = connectClient(server.port, {
+      roomCode: code,
+      displayName: "Guest",
+    });
+    clients.push(guest);
+    await waitForEventWithTimeout(guest, "user:joined");
 
-    const mockPty =
-      mockPtyFactory.instances[mockPtyFactory.instances.length - 1];
+    const mockPty = mockPtyFactory.instances[mockPtyFactory.instances.length - 1];
 
-    client.emit("terminal:resize", { cols: 200, rows: 50 });
-
+    // Guest tries to resize — should be ignored
+    guest.emit("terminal:resize", { cols: 999, rows: 999 });
     await new Promise((r) => setTimeout(r, 100));
+    expect(mockPty.lastResize).toBeNull();
 
+    // Creator resizes — should work
+    creator.emit("terminal:resize", { cols: 200, rows: 50 });
+    await new Promise((r) => setTimeout(r, 100));
     expect(mockPty.lastResize).toEqual({ cols: 200, rows: 50 });
   });
 
@@ -321,40 +330,6 @@ describe("Server", () => {
     expect(mockPty.killed).toBe(true);
   });
 
-  it("rejects a 3rd user trying to join a full room", async () => {
-    const res = await fetch(`http://localhost:${server.port}/api/rooms`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ cwd: "/tmp", hostName: "Host" }),
-    });
-    const { code } = await res.json();
-
-    // Fill the room (max 2 users)
-    const client1 = connectClient(server.port, {
-      roomCode: code,
-      displayName: "User1",
-    });
-    clients.push(client1);
-    await waitForEventWithTimeout(client1, "user:joined");
-
-    const client2 = connectClient(server.port, {
-      roomCode: code,
-      displayName: "User2",
-    });
-    clients.push(client2);
-    await waitForEventWithTimeout(client2, "user:joined");
-
-    // 3rd user should get rejected
-    const client3 = connectClient(server.port, {
-      roomCode: code,
-      displayName: "User3",
-    });
-    clients.push(client3);
-
-    const error = await waitForEventWithTimeout(client3, "error:room");
-    expect(error.message).toContain("full");
-  });
-
   it("returns 500 when PTY spawn fails", async () => {
     // Create a server with a failing PTY spawner
     const failServer = await createServer({
@@ -372,7 +347,7 @@ describe("Server", () => {
       });
       expect(res.status).toBe(500);
       const data = await res.json();
-      expect(data.error).toContain("Failed to spawn claude");
+      expect(data.error).toContain("Failed to spawn shell");
     } finally {
       await failServer.close();
     }

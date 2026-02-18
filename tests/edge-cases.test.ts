@@ -1,7 +1,7 @@
 import { describe, it, expect, afterAll, afterEach } from "vitest";
 import {
   createServer,
-  type SharedClaudeServer,
+  type CodeCompanionServer,
   type SpawnPty,
   type IPtyLike,
 } from "../src/server.js";
@@ -102,7 +102,7 @@ function waitForEventWithTimeout(
 }
 
 describe("Edge cases", () => {
-  let server: SharedClaudeServer;
+  let server: CodeCompanionServer;
   const clients: ClientSocket[] = [];
   let mockPtyFactory: ReturnType<typeof createMockPty>;
 
@@ -135,39 +135,6 @@ describe("Edge cases", () => {
 
     const error = await waitForEventWithTimeout(client, "error:room");
     expect(error.message).toContain("required");
-  });
-
-  it("rejects 3rd user joining a full room", async () => {
-    // Create room via the server's API using mock PTY
-    const res = await fetch(`http://localhost:${server.port}/api/rooms`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ cwd: "/tmp", hostName: "Host" }),
-    });
-    const { code } = await res.json();
-
-    const c1 = connectClient(server.port, {
-      roomCode: code,
-      displayName: "A",
-    });
-    clients.push(c1);
-    await waitForEventWithTimeout(c1, "user:joined");
-
-    const c2 = connectClient(server.port, {
-      roomCode: code,
-      displayName: "B",
-    });
-    clients.push(c2);
-    await waitForEventWithTimeout(c2, "user:joined");
-
-    const c3 = connectClient(server.port, {
-      roomCode: code,
-      displayName: "C",
-    });
-    clients.push(c3);
-
-    const error = await waitForEventWithTimeout(c3, "error:room");
-    expect(error.message).toContain("full");
   });
 
   it("rejects connection to a non-existent room", async () => {
