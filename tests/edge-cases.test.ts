@@ -152,8 +152,6 @@ describe("Edge cases", () => {
     // Create a room
     const res = await fetch(`http://localhost:${server.port}/api/rooms`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ cwd: "/tmp", hostName: "Host" }),
     });
     const { code } = await res.json();
 

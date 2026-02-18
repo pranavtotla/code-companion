@@ -4,10 +4,9 @@ import {
   type Server as HttpServer,
 } from "node:http";
 import { Server as SocketIOServer } from "socket.io";
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
-import fs from "node:fs";
 import { RoomManager } from "./rooms.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -83,26 +82,20 @@ function defaultSpawnPty(
 
   proc.stdout?.on("data", (chunk: Buffer) => {
     const str = chunk.toString("utf-8");
-    console.log("[PTY stdout]", JSON.stringify(str).slice(0, 200));
     for (const cb of dataCallbacks) cb(str);
   });
 
   proc.stderr?.on("data", (chunk: Buffer) => {
-    const str = chunk.toString("utf-8");
-    console.error("[PTY stderr]", JSON.stringify(str).slice(0, 200));
-    for (const cb of dataCallbacks) cb(str);
+    console.error("[PTY stderr]", chunk.toString("utf-8").slice(0, 200));
   });
 
-  proc.on("exit", (code, signal) => {
-    console.log("[PTY exit] code:", code, "signal:", signal);
+  proc.on("exit", (code) => {
     for (const cb of exitCallbacks) cb({ exitCode: code ?? 0 });
   });
 
   proc.on("error", (err) => {
     console.error("[PTY error]", err);
   });
-
-  console.log("[PTY spawned] pid:", proc.pid, "cmd:", command);
 
   return {
     pid: proc.pid ?? 0,
@@ -115,10 +108,7 @@ function defaultSpawnPty(
     write: (data) => {
       proc.stdin?.write(data);
     },
-    resize: (_cols, _rows) => {
-      // Resize is not supported with the Python PTY helper.
-      // Initial size is set via COLUMNS/LINES env vars at spawn time.
-    },
+    resize: () => {},
     kill: (signal) => {
       proc.kill(signal as NodeJS.Signals | undefined);
     },
@@ -139,24 +129,11 @@ export async function createServer(
   // Track PTY processes by room code for cleanup
   const ptyProcesses = new Map<string, IPtyLike>();
 
-  // --- Middleware ---
-  app.use(express.json());
   app.use(express.static(path.join(__dirname, "..", "public")));
 
   // --- REST API ---
-  app.post("/api/rooms", (req, res) => {
-    const { cwd, hostName } = req.body ?? {};
-    const workingDir = cwd || process.cwd();
-
-    // Validate the working directory exists
-    if (!fs.existsSync(workingDir)) {
-      res
-        .status(400)
-        .json({ error: `Directory does not exist: ${workingDir}` });
-      return;
-    }
-
-    const room = roomManager.createRoom({ cwd: workingDir, hostName });
+  app.post("/api/rooms", (_req, res) => {
+    const room = roomManager.createRoom();
 
     try {
       // Spawn bash in a PTY
@@ -164,7 +141,7 @@ export async function createServer(
         name: "xterm-256color",
         cols: 120,
         rows: 40,
-        cwd: workingDir,
+        cwd: process.cwd(),
         env: process.env as Record<string, string>,
       });
 
@@ -184,7 +161,6 @@ export async function createServer(
       });
     } catch (err) {
       console.error("PTY spawn failed:", err);
-      console.error("Working dir:", workingDir);
       roomManager.destroyRoom(room.code);
       const message = err instanceof Error ? err.message : "Unknown error";
       res.status(500).json({ error: `Failed to spawn shell: ${message}` });
@@ -196,7 +172,6 @@ export async function createServer(
 
   // --- WebSocket ---
   io.on("connection", (socket) => {
-    console.log("[WS] new connection:", socket.id);
     const { roomCode, displayName } = socket.handshake.query as Record<
       string,
       string
@@ -256,8 +231,7 @@ export async function createServer(
     });
 
     // Disconnect
-    socket.on("disconnect", (reason) => {
-      console.log("[WS] disconnected:", socket.id, "reason:", reason);
+    socket.on("disconnect", () => {
       room.removeUser(socket.id);
       io.to(roomCode).emit("user:left", {
         name: displayName,

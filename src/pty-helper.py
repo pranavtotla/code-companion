@@ -11,7 +11,6 @@ import select
 import struct
 import fcntl
 import termios
-import signal
 
 
 def set_winsize(fd, rows, cols):
@@ -45,17 +44,6 @@ def main():
     else:
         # Parent: relay between piped stdin/stdout and the master PTY fd
         os.close(slave_fd)
-
-        # Handle SIGUSR1 to resize the PTY (sent by Node with cols:rows in env)
-        def handle_resize(signum, frame):
-            try:
-                c = int(os.environ.get("COLUMNS", "120"))
-                r = int(os.environ.get("LINES", "40"))
-                set_winsize(master_fd, r, c)
-            except (ValueError, OSError):
-                pass
-
-        signal.signal(signal.SIGUSR1, handle_resize)
 
         stdin_fd = sys.stdin.fileno()
         stdout_fd = sys.stdout.fileno()

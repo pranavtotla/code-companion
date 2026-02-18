@@ -7,42 +7,28 @@ interface UserInfo {
   name: string;
 }
 
-interface CreateRoomOptions {
-  cwd: string;
-  hostName?: string;
-}
-
 export class Room {
   readonly code: string;
-  readonly cwd: string;
-  readonly hostName: string;
   creatorSocketId: string | null = null;
   private users: Map<string, string> = new Map(); // socketId -> displayName
 
-  constructor(code: string, options: CreateRoomOptions) {
+  constructor(code: string) {
     this.code = code;
-    this.cwd = options.cwd;
-    this.hostName = options.hostName ?? "Host";
   }
 
   get userCount(): number {
     return this.users.size;
   }
 
-  addUser(socketId: string, name: string): boolean {
+  addUser(socketId: string, name: string): void {
     if (this.creatorSocketId === null) {
       this.creatorSocketId = socketId;
     }
     this.users.set(socketId, name);
-    return true;
   }
 
   removeUser(socketId: string): void {
     this.users.delete(socketId);
-  }
-
-  getUserName(socketId: string): string | undefined {
-    return this.users.get(socketId);
   }
 
   getUsers(): UserInfo[] {
@@ -60,9 +46,9 @@ export class Room {
 export class RoomManager {
   private rooms: Map<string, Room> = new Map();
 
-  createRoom(options: CreateRoomOptions): Room {
+  createRoom(): Room {
     const code = generateCode();
-    const room = new Room(code, options);
+    const room = new Room(code);
     this.rooms.set(code, room);
     return room;
   }

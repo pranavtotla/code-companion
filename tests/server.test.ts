@@ -130,8 +130,6 @@ describe("Server", () => {
   it("creates a room via POST /api/rooms", async () => {
     const res = await fetch(`http://localhost:${server.port}/api/rooms`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ cwd: "/tmp", hostName: "Alice" }),
     });
     expect(res.ok).toBe(true);
     const data = await res.json();
@@ -155,8 +153,6 @@ describe("Server", () => {
     // Create a room first
     const res = await fetch(`http://localhost:${server.port}/api/rooms`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ cwd: "/tmp", hostName: "TestHost" }),
     });
     const { code } = await res.json();
 
@@ -176,8 +172,6 @@ describe("Server", () => {
     // Create a room
     const res = await fetch(`http://localhost:${server.port}/api/rooms`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ cwd: "/tmp", hostName: "Host" }),
     });
     const { code } = await res.json();
 
@@ -206,8 +200,6 @@ describe("Server", () => {
     // Create a room
     const res = await fetch(`http://localhost:${server.port}/api/rooms`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ cwd: "/tmp", hostName: "Host" }),
     });
     const { code } = await res.json();
 
@@ -235,8 +227,6 @@ describe("Server", () => {
   it("only allows room creator to resize the terminal", async () => {
     const res = await fetch(`http://localhost:${server.port}/api/rooms`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ hostName: "Host" }),
     });
     const { code } = await res.json();
 
@@ -270,8 +260,6 @@ describe("Server", () => {
   it("notifies room when a user disconnects", async () => {
     const res = await fetch(`http://localhost:${server.port}/api/rooms`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ cwd: "/tmp", hostName: "Host" }),
     });
     const { code } = await res.json();
 
@@ -304,8 +292,6 @@ describe("Server", () => {
   it("kills PTY when last user disconnects", async () => {
     const res = await fetch(`http://localhost:${server.port}/api/rooms`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ cwd: "/tmp", hostName: "Host" }),
     });
     const { code } = await res.json();
 
@@ -343,7 +329,7 @@ describe("Server", () => {
       const res = await fetch(`http://localhost:${failServer.port}/api/rooms`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ cwd: "/tmp", hostName: "Alice" }),
+        body: JSON.stringify({}),
       });
       expect(res.status).toBe(500);
       const data = await res.json();
@@ -356,8 +342,6 @@ describe("Server", () => {
   it("relays typing indicators between clients", async () => {
     const res = await fetch(`http://localhost:${server.port}/api/rooms`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ cwd: "/tmp", hostName: "Host" }),
     });
     const { code } = await res.json();
 
@@ -394,8 +378,6 @@ describe("Server", () => {
   it("notifies clients when PTY process exits", async () => {
     const res = await fetch(`http://localhost:${server.port}/api/rooms`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ cwd: "/tmp", hostName: "Host" }),
     });
     const { code } = await res.json();
 
