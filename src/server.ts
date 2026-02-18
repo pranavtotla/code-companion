@@ -11,9 +11,23 @@ import { RoomManager } from "./rooms.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+export interface RoomInfo {
+  roomCode: string;
+  userCount: number;
+  localUrl: string;
+}
+
+export interface CreateRoomResult {
+  roomCode: string;
+  localUrl: string;
+}
+
 export interface CodeCompanionServer {
   port: number;
   close(): Promise<void>;
+  createRoom(options: { cwd?: string }): Promise<CreateRoomResult>;
+  getRooms(): RoomInfo[];
+  stopRoom(code: string): boolean;
 }
 
 /** Minimal interface for a PTY-like process */
@@ -130,44 +144,55 @@ export async function createServer(
   const ptyProcesses = new Map<string, IPtyLike>();
 
   app.use(express.static(path.join(__dirname, "..", "public")));
+  app.use(express.json());
 
-  // --- REST API ---
-  app.post("/api/rooms", (_req, res) => {
+  // --- Shared room-creation logic ---
+  function createRoomInternal(cwd?: string): { roomCode: string } {
     const room = roomManager.createRoom();
 
+    let shell: IPtyLike;
     try {
-      // Spawn bash in a PTY
-      const shell = spawnPty("bash", [], {
+      shell = spawnPty("bash", [], {
         name: "xterm-256color",
         cols: 120,
         rows: 40,
-        cwd: process.cwd(),
+        cwd: cwd ?? process.cwd(),
         env: process.env as Record<string, string>,
       });
-
-      // Store PTY process for this room
-      ptyProcesses.set(room.code, shell);
-
-      // When PTY produces output, broadcast to all sockets in the room
-      shell.onData((data: string) => {
-        io.to(room.code).emit("terminal:output", data);
-      });
-
-      // When shell exits, notify room and clean up
-      shell.onExit(({ exitCode }) => {
-        io.to(room.code).emit("terminal:exit", { exitCode });
-        ptyProcesses.delete(room.code);
-        roomManager.destroyRoom(room.code);
-      });
     } catch (err) {
-      console.error("PTY spawn failed:", err);
       roomManager.destroyRoom(room.code);
-      const message = err instanceof Error ? err.message : "Unknown error";
-      res.status(500).json({ error: `Failed to spawn shell: ${message}` });
-      return;
+      throw err;
     }
 
-    res.json({ code: room.code });
+    // Store PTY process for this room
+    ptyProcesses.set(room.code, shell);
+
+    // When PTY produces output, broadcast to all sockets in the room
+    shell.onData((data: string) => {
+      io.to(room.code).emit("terminal:output", data);
+    });
+
+    // When shell exits, notify room and clean up
+    shell.onExit(({ exitCode }) => {
+      io.to(room.code).emit("terminal:exit", { exitCode });
+      ptyProcesses.delete(room.code);
+      roomManager.destroyRoom(room.code);
+    });
+
+    return { roomCode: room.code };
+  }
+
+  // --- REST API ---
+  app.post("/api/rooms", (req, res) => {
+    try {
+      const cwd = req.body?.cwd as string | undefined;
+      const { roomCode } = createRoomInternal(cwd);
+      res.json({ code: roomCode });
+    } catch (err) {
+      console.error("PTY spawn failed:", err);
+      const message = err instanceof Error ? err.message : "Unknown error";
+      res.status(500).json({ error: `Failed to spawn shell: ${message}` });
+    }
   });
 
   // --- WebSocket ---
@@ -258,6 +283,7 @@ export async function createServer(
       const actualPort = typeof addr === "object" && addr ? addr.port : port;
       resolve({
         port: actualPort,
+
         close: () =>
           new Promise<void>((res) => {
             // Kill all PTY processes
@@ -269,6 +295,39 @@ export async function createServer(
             io.close();
             httpServer.close(() => res());
           }),
+
+        async createRoom(opts: { cwd?: string } = {}): Promise<CreateRoomResult> {
+          const { roomCode } = createRoomInternal(opts.cwd);
+          return {
+            roomCode,
+            localUrl: `http://localhost:${actualPort}/?room=${roomCode}`,
+          };
+        },
+
+        getRooms(): RoomInfo[] {
+          return roomManager.getAllRooms().map((room) => ({
+            roomCode: room.code,
+            userCount: room.userCount,
+            localUrl: `http://localhost:${actualPort}/?room=${room.code}`,
+          }));
+        },
+
+        stopRoom(code: string): boolean {
+          const room = roomManager.getRoom(code);
+          if (!room) return false;
+
+          const ptyProcess = ptyProcesses.get(code);
+          if (ptyProcess) {
+            ptyProcess.kill();
+            ptyProcesses.delete(code);
+          }
+
+          // Notify connected clients
+          io.to(code).emit("terminal:exit", { exitCode: 0 });
+
+          roomManager.destroyRoom(code);
+          return true;
+        },
       });
     });
   });

@@ -397,3 +397,227 @@ describe("Server", () => {
     expect(exitData.exitCode).toBe(0);
   });
 });
+
+describe("Programmatic API", () => {
+  let server: CodeCompanionServer;
+  let mockPtyFactory: ReturnType<typeof createMockPty>;
+  const clients: ClientSocket[] = [];
+
+  afterEach(() => {
+    for (const c of clients) c.disconnect();
+    clients.length = 0;
+  });
+
+  afterAll(async () => {
+    if (server) await server.close();
+  });
+
+  it("starts the server for programmatic API tests", async () => {
+    mockPtyFactory = createMockPty();
+    server = await createServer({
+      port: TEST_PORT,
+      spawnPty: mockPtyFactory.spawner,
+    });
+    expect(server.port).toBeGreaterThan(0);
+  });
+
+  it("createRoom() returns roomCode and localUrl", async () => {
+    const result = await server.createRoom({});
+    expect(result.roomCode).toHaveLength(6);
+    expect(result.localUrl).toBe(
+      `http://localhost:${server.port}/?room=${result.roomCode}`
+    );
+    // Verify a PTY was spawned
+    expect(mockPtyFactory.instances).toHaveLength(1);
+  });
+
+  it("createRoom() accepts optional cwd", async () => {
+    let capturedCwd: string | undefined;
+    const cwdCapturingServer = await createServer({
+      port: TEST_PORT,
+      spawnPty: (_command, _args, options) => {
+        capturedCwd = options.cwd;
+        const mock = new MockPty();
+        return mock;
+      },
+    });
+
+    try {
+      await cwdCapturingServer.createRoom({ cwd: "/tmp" });
+      expect(capturedCwd).toBe("/tmp");
+    } finally {
+      await cwdCapturingServer.close();
+    }
+  });
+
+  it("createRoom() defaults cwd to process.cwd()", async () => {
+    let capturedCwd: string | undefined;
+    const cwdCapturingServer = await createServer({
+      port: TEST_PORT,
+      spawnPty: (_command, _args, options) => {
+        capturedCwd = options.cwd;
+        const mock = new MockPty();
+        return mock;
+      },
+    });
+
+    try {
+      await cwdCapturingServer.createRoom({});
+      expect(capturedCwd).toBe(process.cwd());
+    } finally {
+      await cwdCapturingServer.close();
+    }
+  });
+
+  it("getRooms() lists active rooms", async () => {
+    // Create two rooms
+    const room1 = await server.createRoom({});
+    const room2 = await server.createRoom({});
+
+    const rooms = server.getRooms();
+    const codes = rooms.map((r) => r.roomCode);
+
+    // Should contain both rooms we just created (plus the one from the first test)
+    expect(codes).toContain(room1.roomCode);
+    expect(codes).toContain(room2.roomCode);
+
+    // All rooms should have userCount 0 (no sockets connected)
+    for (const room of rooms) {
+      expect(room.userCount).toBe(0);
+      expect(room.localUrl).toContain(`/?room=${room.roomCode}`);
+    }
+  });
+
+  it("getRooms() reflects correct userCount after socket joins", async () => {
+    const result = await server.createRoom({});
+
+    // Connect a client to that room
+    const client = connectClient(server.port, {
+      roomCode: result.roomCode,
+      displayName: "Alice",
+    });
+    clients.push(client);
+    await waitForEventWithTimeout(client, "user:joined");
+
+    const rooms = server.getRooms();
+    const room = rooms.find((r) => r.roomCode === result.roomCode);
+    expect(room).toBeDefined();
+    expect(room!.userCount).toBe(1);
+  });
+
+  it("stopRoom() kills PTY and removes room", async () => {
+    const result = await server.createRoom({});
+    const mockPty =
+      mockPtyFactory.instances[mockPtyFactory.instances.length - 1];
+
+    expect(mockPty.killed).toBe(false);
+
+    const stopped = server.stopRoom(result.roomCode);
+    expect(stopped).toBe(true);
+    expect(mockPty.killed).toBe(true);
+
+    // Room should no longer appear in getRooms
+    const rooms = server.getRooms();
+    const codes = rooms.map((r) => r.roomCode);
+    expect(codes).not.toContain(result.roomCode);
+  });
+
+  it("stopRoom() returns false for unknown room", () => {
+    const stopped = server.stopRoom("zzzzzz");
+    expect(stopped).toBe(false);
+  });
+
+  it("stopRoom() emits terminal:exit to connected clients", async () => {
+    const result = await server.createRoom({});
+
+    // Connect a client
+    const client = connectClient(server.port, {
+      roomCode: result.roomCode,
+      displayName: "Watcher",
+    });
+    clients.push(client);
+    await waitForEventWithTimeout(client, "user:joined");
+
+    // Listen for terminal:exit before stopping
+    const exitPromise = waitForEventWithTimeout(client, "terminal:exit");
+    server.stopRoom(result.roomCode);
+    const exitData = await exitPromise;
+    expect(exitData.exitCode).toBe(0);
+  });
+
+  it("HTTP POST /api/rooms still works with the refactored code", async () => {
+    const res = await fetch(`http://localhost:${server.port}/api/rooms`, {
+      method: "POST",
+    });
+    expect(res.ok).toBe(true);
+    const data = await res.json();
+    expect(data.code).toHaveLength(6);
+  });
+
+  it("HTTP POST /api/rooms accepts cwd in request body", async () => {
+    let capturedCwd: string | undefined;
+    const cwdServer = await createServer({
+      port: TEST_PORT,
+      spawnPty: (_command, _args, options) => {
+        capturedCwd = options.cwd;
+        const mock = new MockPty();
+        return mock;
+      },
+    });
+
+    try {
+      const res = await fetch(`http://localhost:${cwdServer.port}/api/rooms`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cwd: "/tmp" }),
+      });
+      expect(res.ok).toBe(true);
+      const data = await res.json();
+      expect(data.code).toHaveLength(6);
+      expect(capturedCwd).toBe("/tmp");
+    } finally {
+      await cwdServer.close();
+    }
+  });
+
+  it("HTTP POST /api/rooms returns 500 when PTY spawn fails", async () => {
+    const failServer = await createServer({
+      port: TEST_PORT,
+      spawnPty: () => {
+        throw new Error("PTY not available");
+      },
+    });
+
+    try {
+      const res = await fetch(`http://localhost:${failServer.port}/api/rooms`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      expect(res.status).toBe(500);
+      const data = await res.json();
+      expect(data.error).toContain("Failed to spawn shell");
+    } finally {
+      await failServer.close();
+    }
+  });
+
+  it("createRoom() throws when PTY spawn fails", async () => {
+    const failServer = await createServer({
+      port: TEST_PORT,
+      spawnPty: () => {
+        throw new Error("PTY not available");
+      },
+    });
+
+    try {
+      await expect(failServer.createRoom({})).rejects.toThrow(
+        "PTY not available"
+      );
+      // Verify the room was cleaned up (not left dangling)
+      expect(failServer.getRooms()).toHaveLength(0);
+    } finally {
+      await failServer.close();
+    }
+  });
+});
