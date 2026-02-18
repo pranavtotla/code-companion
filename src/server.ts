@@ -336,8 +336,7 @@ export async function createServer(
 // Run directly
 const isMain =
   process.argv[1] &&
-  (process.argv[1].endsWith("server.ts") ||
-    process.argv[1].endsWith("server.js"));
+  new URL(`file://${process.argv[1]}`).href === import.meta.url;
 if (isMain) {
   const port = parseInt(process.env.PORT ?? "3000", 10);
   createServer({ port }).then((s) => {

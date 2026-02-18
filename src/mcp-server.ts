@@ -13,6 +13,8 @@ export interface McpDeps {
   tunnel: TunnelManager;
   /** Peek at the current server without starting one (for read-only queries). */
   peekServer: () => CodeCompanionServer | null;
+  /** Clear the cached server reference (e.g. after closing it). */
+  clearServer: () => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -29,7 +31,11 @@ export async function handleCreateSession(
   let tunnelUrl: string | undefined;
   if (params.tunnel) {
     if (!deps.tunnel.isRunning) {
-      tunnelUrl = await deps.tunnel.start(srv.port);
+      try {
+        tunnelUrl = await deps.tunnel.start(srv.port);
+      } catch {
+        // Tunnel failed — continue without it
+      }
     } else {
       tunnelUrl = deps.tunnel.url ?? undefined;
     }
@@ -119,6 +125,7 @@ export async function handleStopServer(
   const srv = deps.peekServer();
   if (srv) {
     await srv.close();
+    deps.clearServer();
   }
   deps.tunnel.stop();
   return { success: true };
@@ -142,10 +149,18 @@ function createMcpServer(deps: McpDeps): McpServer {
         .describe("Start a cloudflared tunnel for remote access"),
     },
     async (params) => {
-      const result = await handleCreateSession(params, deps);
-      return {
-        content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
-      };
+      try {
+        const result = await handleCreateSession(params, deps);
+        return {
+          content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+        };
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Unknown error";
+        return {
+          content: [{ type: "text", text: JSON.stringify({ error: message }) }],
+          isError: true,
+        };
+      }
     }
   );
 
@@ -207,8 +222,7 @@ function createMcpServer(deps: McpDeps): McpServer {
 
 const isMain =
   process.argv[1] &&
-  (process.argv[1].endsWith("mcp-server.ts") ||
-    process.argv[1].endsWith("mcp-server.js"));
+  new URL(`file://${process.argv[1]}`).href === import.meta.url;
 
 if (isMain) {
   let server: CodeCompanionServer | null = null;
@@ -225,6 +239,7 @@ if (isMain) {
     getServer: ensureServer,
     tunnel,
     peekServer: () => server,
+    clearServer: () => { server = null; },
   };
 
   const mcp = createMcpServer(deps);

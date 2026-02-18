@@ -106,14 +106,17 @@ class MockTunnelManager {
 function createDeps(
   server: CodeCompanionServer | null,
   tunnel: MockTunnelManager
-): McpDeps {
+): McpDeps & { _setServer: (s: CodeCompanionServer | null) => void } {
+  let _server = server;
   return {
     getServer: async () => {
-      if (!server) throw new Error("No server available");
-      return server;
+      if (!_server) throw new Error("No server available");
+      return _server;
     },
     tunnel: tunnel as unknown as TunnelManager,
-    peekServer: () => server,
+    peekServer: () => _server,
+    clearServer: () => { _server = null; },
+    _setServer: (s: CodeCompanionServer | null) => { _server = s; },
   };
 }
 
@@ -232,6 +235,7 @@ describe("MCP Server Handlers", () => {
         },
         tunnel: tunnel as unknown as TunnelManager,
         peekServer: () => (serverCreated ? server : null),
+        clearServer: () => { serverCreated = false; },
       };
 
       expect(serverCreated).toBe(false);
@@ -312,9 +316,8 @@ describe("MCP Server Handlers", () => {
         roomCode,
         userCount: 0,
       });
-      if ("localUrl" in result) {
-        expect(result.localUrl).toContain(`/?room=${roomCode}`);
-      }
+      expect(result).toHaveProperty("localUrl");
+      expect((result as any).localUrl).toContain(`/?room=${roomCode}`);
     });
 
     it("returns error when server not running", () => {
@@ -344,9 +347,8 @@ describe("MCP Server Handlers", () => {
 
       const result = handleGetSessionInfo({ roomCode }, deps);
       expect(result).not.toHaveProperty("error");
-      if ("tunnelUrl" in result) {
-        expect(result.tunnelUrl).toContain("trycloudflare.com");
-      }
+      expect(result).toHaveProperty("tunnelUrl");
+      expect((result as any).tunnelUrl).toContain("trycloudflare.com");
     });
 
     it("does not include tunnelUrl when tunnel is not running", async () => {
@@ -465,6 +467,40 @@ describe("MCP Server Handlers", () => {
 
       // Don't close again in afterEach since we set the main `server` separately
     });
+
+    it("allows creating sessions after stop_server", async () => {
+      // Use a dedicated server so we can stop and recreate
+      const ptyFactory1 = createMockPty();
+      const server1 = await createServer({
+        port: 0,
+        spawnPty: ptyFactory1.spawner,
+      });
+      const deps = createDeps(server1, tunnel);
+
+      // Create a session, then stop the server
+      const session1 = await handleCreateSession({}, deps);
+      expect(session1.roomCode).toHaveLength(6);
+
+      await handleStopServer(deps);
+
+      // peekServer should now return null since clearServer was called
+      expect(deps.peekServer()).toBeNull();
+
+      // Wire up a new server via _setServer and getServer
+      const ptyFactory2 = createMockPty();
+      const server2 = await createServer({
+        port: 0,
+        spawnPty: ptyFactory2.spawner,
+      });
+      deps._setServer(server2);
+
+      // Creating a new session should work
+      const session2 = await handleCreateSession({}, deps);
+      expect(session2.roomCode).toHaveLength(6);
+      expect(session2.roomCode).not.toBe(session1.roomCode);
+
+      await server2.close();
+    });
   });
 
   // -----------------------------------------------------------------------
@@ -490,9 +526,8 @@ describe("MCP Server Handlers", () => {
         deps
       );
       expect(info).not.toHaveProperty("error");
-      if ("roomCode" in info) {
-        expect(info.roomCode).toBe(created.roomCode);
-      }
+      expect(info).toHaveProperty("roomCode");
+      expect((info as any).roomCode).toBe(created.roomCode);
 
       // Stop the session
       const stopped = handleStopSession(
