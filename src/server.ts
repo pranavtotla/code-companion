@@ -7,7 +7,9 @@ import { Server as SocketIOServer } from "socket.io";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
+import * as querystring from "node:querystring";
 import { RoomManager } from "./rooms.js";
+import { SlackBridge, verifySlackSignature } from "./slack.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -43,6 +45,8 @@ interface ServerOptions {
   port?: number;
   /** Override the PTY spawner (for testing) */
   spawnPty?: SpawnPty;
+  /** Optional Slack integration */
+  slackBridge?: SlackBridge;
 }
 
 const PTY_HELPER = path.join(__dirname, "pty-helper.py");
@@ -128,6 +132,14 @@ export async function createServer(
 
   // Track PTY processes by room code for cleanup
   const ptyProcesses = new Map<string, IPtyLike>();
+  const slackBridge = options.slackBridge ?? null;
+
+  if (slackBridge) {
+    slackBridge.onWrite((roomCode, input) => {
+      const ptyProcess = ptyProcesses.get(roomCode);
+      if (ptyProcess) ptyProcess.write(input);
+    });
+  }
 
   app.use(express.static(path.join(__dirname, "..", "public")));
 
@@ -151,11 +163,13 @@ export async function createServer(
       // When PTY produces output, broadcast to all sockets in the room
       shell.onData((data: string) => {
         io.to(room.code).emit("terminal:output", data);
+        if (slackBridge) slackBridge.onOutput(room.code, data);
       });
 
       // When shell exits, notify room and clean up
       shell.onExit(({ exitCode }) => {
         io.to(room.code).emit("terminal:exit", { exitCode });
+        if (slackBridge) slackBridge.onRoomDestroyed(room.code);
         ptyProcesses.delete(room.code);
         roomManager.destroyRoom(room.code);
       });
@@ -169,6 +183,120 @@ export async function createServer(
 
     res.json({ code: room.code });
   });
+
+  // --- Slack endpoints (only when Slack integration is enabled) ---
+  if (slackBridge) {
+    // Slash command endpoint — needs raw body for signature verification
+    app.post(
+      "/slack/commands",
+      express.raw({ type: "application/x-www-form-urlencoded" }),
+      async (req, res) => {
+        const rawBody = (req.body as Buffer).toString("utf-8");
+        const signature = req.headers["x-slack-signature"] as string;
+        const timestamp = req.headers["x-slack-request-timestamp"] as string;
+
+        if (
+          !signature ||
+          !timestamp ||
+          !verifySlackSignature(
+            slackBridge.signingSecret,
+            signature,
+            timestamp,
+            rawBody
+          )
+        ) {
+          res.status(401).json({ error: "Invalid signature" });
+          return;
+        }
+
+        const params = querystring.parse(rawBody);
+        const text = (params.text as string | undefined)?.trim() ?? "";
+        const channelId = params.channel_id as string;
+
+        // "join <code>" — join an existing room
+        const joinMatch = text.match(/^join\s+(\S+)$/i);
+        if (joinMatch) {
+          const code = joinMatch[1];
+          const room = roomManager.getRoom(code);
+          if (!room) {
+            res.json({ response_type: "ephemeral", text: `Room '${code}' not found.` });
+            return;
+          }
+          const thread = await slackBridge.client.chat.postMessage({
+            channel: channelId,
+            text: `Linked to session \`${code}\``,
+          });
+          slackBridge.linkRoom(code, channelId, thread.ts!);
+          res.json({ response_type: "in_channel", text: `Joined session \`${code}\`` });
+          return;
+        }
+
+        // Default — create a new room and spawn a PTY
+        const room = roomManager.createRoom();
+        try {
+          const shell = spawnPty("bash", [], {
+            name: "xterm-256color",
+            cols: 120,
+            rows: 40,
+            cwd: process.cwd(),
+            env: process.env as Record<string, string>,
+          });
+
+          ptyProcesses.set(room.code, shell);
+
+          shell.onData((data: string) => {
+            io.to(room.code).emit("terminal:output", data);
+            if (slackBridge) slackBridge.onOutput(room.code, data);
+          });
+
+          shell.onExit(({ exitCode }) => {
+            io.to(room.code).emit("terminal:exit", { exitCode });
+            if (slackBridge) slackBridge.onRoomDestroyed(room.code);
+            ptyProcesses.delete(room.code);
+            roomManager.destroyRoom(room.code);
+          });
+        } catch (err) {
+          roomManager.destroyRoom(room.code);
+          res.json({ response_type: "ephemeral", text: "Failed to spawn shell." });
+          return;
+        }
+
+        const thread = await slackBridge.client.chat.postMessage({
+          channel: channelId,
+          text: `New session started: \`${room.code}\``,
+        });
+        slackBridge.linkRoom(room.code, channelId, thread.ts!);
+        res.json({
+          response_type: "in_channel",
+          text: `Session \`${room.code}\` created. Reply in the thread to send input.`,
+        });
+      }
+    );
+
+    // Events endpoint — handles url_verification and thread replies
+    app.post("/slack/events", express.json(), (req, res) => {
+      const body = req.body;
+
+      // Slack URL verification challenge
+      if (body.type === "url_verification") {
+        res.json({ challenge: body.challenge });
+        return;
+      }
+
+      // Handle message events in threads
+      const event = body.event;
+      if (
+        event &&
+        event.type === "message" &&
+        event.thread_ts &&
+        !event.bot_id
+      ) {
+        slackBridge.handleThreadReply(event.channel, event.thread_ts, event.text ?? "");
+      }
+
+      res.sendStatus(200);
+    });
+  }
 
   // --- WebSocket ---
   io.on("connection", (socket) => {
@@ -245,6 +373,7 @@ export async function createServer(
           ptyProcess.kill();
           ptyProcesses.delete(roomCode);
         }
+        if (slackBridge) slackBridge.onRoomDestroyed(roomCode);
         roomManager.destroyRoom(roomCode);
       }
     });
@@ -265,6 +394,7 @@ export async function createServer(
               ptyProcess.kill();
               ptyProcesses.delete(code);
             }
+            if (slackBridge) slackBridge.destroy();
             roomManager.destroyAll();
             io.close();
             httpServer.close(() => res());
@@ -281,7 +411,16 @@ const isMain =
     process.argv[1].endsWith("server.js"));
 if (isMain) {
   const port = parseInt(process.env.PORT ?? "3000", 10);
-  createServer({ port }).then((s) => {
+  const slackToken = process.env.SLACK_BOT_TOKEN;
+  const slackSecret = process.env.SLACK_SIGNING_SECRET;
+  let slackBridge: SlackBridge | undefined;
+
+  if (slackToken && slackSecret) {
+    slackBridge = new SlackBridge({ botToken: slackToken, signingSecret: slackSecret });
+    console.log("Slack integration enabled");
+  }
+
+  createServer({ port, slackBridge }).then((s) => {
     console.log(`Code Companion running on http://localhost:${s.port}`);
   });
 }
