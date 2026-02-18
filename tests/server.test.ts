@@ -554,7 +554,7 @@ describe("Programmatic API", () => {
     expect(data.code).toHaveLength(6);
   });
 
-  it("HTTP POST /api/rooms accepts cwd in request body", async () => {
+  it("HTTP POST /api/rooms ignores cwd in request body (security: always uses process.cwd())", async () => {
     let capturedCwd: string | undefined;
     const cwdServer = await createServer({
       port: TEST_PORT,
@@ -574,7 +574,8 @@ describe("Programmatic API", () => {
       expect(res.ok).toBe(true);
       const data = await res.json();
       expect(data.code).toHaveLength(6);
-      expect(capturedCwd).toBe("/tmp");
+      // cwd from request body should be ignored; should use process.cwd() instead
+      expect(capturedCwd).toBe(process.cwd());
     } finally {
       await cwdServer.close();
     }

@@ -53,6 +53,9 @@ export class TunnelManager {
           settled = true;
           clearTimeout(timeout);
           this._url = match[0];
+          // Clean up data listeners once URL is extracted
+          child.stdout?.removeListener("data", onData);
+          child.stderr?.removeListener("data", onData);
           resolve(match[0]);
         }
       };
@@ -87,6 +90,14 @@ export class TunnelManager {
         reject(
           new Error(`cloudflared exited with code ${code} before producing a URL`),
         );
+      });
+
+      // Unconditional close handler: if cloudflared crashes after the promise
+      // settled (URL was already extracted), clean up stale state so isRunning
+      // reflects reality.
+      child.on("close", () => {
+        this.process = null;
+        this._url = null;
       });
     });
   }

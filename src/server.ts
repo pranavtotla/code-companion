@@ -174,6 +174,7 @@ export async function createServer(
 
     // When shell exits, notify room and clean up
     shell.onExit(({ exitCode }) => {
+      if (!ptyProcesses.has(room.code)) return; // already cleaned up by stopRoom
       io.to(room.code).emit("terminal:exit", { exitCode });
       ptyProcesses.delete(room.code);
       roomManager.destroyRoom(room.code);
@@ -183,10 +184,9 @@ export async function createServer(
   }
 
   // --- REST API ---
-  app.post("/api/rooms", (req, res) => {
+  app.post("/api/rooms", (_req, res) => {
     try {
-      const cwd = req.body?.cwd as string | undefined;
-      const { roomCode } = createRoomInternal(cwd);
+      const { roomCode } = createRoomInternal();
       res.json({ code: roomCode });
     } catch (err) {
       console.error("PTY spawn failed:", err);
