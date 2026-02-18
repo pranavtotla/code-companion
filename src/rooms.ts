@@ -12,8 +12,6 @@ interface CreateRoomOptions {
   hostName?: string;
 }
 
-const MAX_USERS = 2;
-
 export class Room {
   readonly code: string;
   readonly cwd: string;
@@ -31,7 +29,6 @@ export class Room {
   }
 
   addUser(socketId: string, name: string): boolean {
-    if (this.users.size >= MAX_USERS) return false;
     this.users.set(socketId, name);
     return true;
   }

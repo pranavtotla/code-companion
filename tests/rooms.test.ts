@@ -43,22 +43,12 @@ describe("RoomManager", () => {
       expect(room.userCount).toBe(0);
     });
 
-    it("allows up to 2 users", () => {
+    it("allows unlimited users", () => {
       const room = manager.createRoom({ cwd: "/tmp" });
-      const added1 = room.addUser("socket1", "Alice");
-      const added2 = room.addUser("socket2", "Bob");
-      expect(added1).toBe(true);
-      expect(added2).toBe(true);
-      expect(room.userCount).toBe(2);
-    });
-
-    it("rejects a 3rd user", () => {
-      const room = manager.createRoom({ cwd: "/tmp" });
-      room.addUser("socket1", "Alice");
-      room.addUser("socket2", "Bob");
-      const added3 = room.addUser("socket3", "Charlie");
-      expect(added3).toBe(false);
-      expect(room.userCount).toBe(2);
+      for (let i = 0; i < 10; i++) {
+        expect(room.addUser(`socket${i}`, `User${i}`)).toBe(true);
+      }
+      expect(room.userCount).toBe(10);
     });
 
     it("removes a user by socket ID", () => {
